@@ -5,10 +5,12 @@ import net.corda.djvm.code.EmitterContext
 import net.corda.djvm.code.Instruction
 import net.corda.djvm.code.instructions.CodeLabel
 import net.corda.djvm.code.instructions.TryCatchBlock
-import net.corda.djvm.costing.ThresholdViolationException
 import net.corda.djvm.rules.InstructionRule
 import net.corda.djvm.validation.RuleContext
 import org.objectweb.asm.Label
+import org.objectweb.asm.Type
+import sandbox.net.corda.djvm.costing.ThresholdViolationException
+import sandbox.net.corda.djvm.rules.RuleViolationException
 
 /**
  * Rule that checks for attempted catches of [ThreadDeath], [ThresholdViolationException], [StackOverflowError],
@@ -21,14 +23,6 @@ class DisallowCatchingBlacklistedExceptions : InstructionRule(), Emitter {
             val typeName = context.classModule.getFormattedClassName(instruction.typeName)
             warn("Injected runtime check for catch-block for type $typeName") given
                     (instruction.typeName in disallowedExceptionTypes)
-            fail("Disallowed catch of ThreadDeath exception") given
-                    (instruction.typeName == threadDeathException)
-            fail("Disallowed catch of stack overflow exception") given
-                    (instruction.typeName == stackOverflowException)
-            fail("Disallowed catch of out of memory exception") given
-                    (instruction.typeName == outOfMemoryException)
-            fail("Disallowed catch of threshold violation exception") given
-                    (instruction.typeName.endsWith(ThresholdViolationException::class.java.simpleName))
         }
     }
 
@@ -46,13 +40,30 @@ class DisallowCatchingBlacklistedExceptions : InstructionRule(), Emitter {
     private fun isExceptionHandler(label: Label) = label in handlers
 
     companion object {
+        private val thresholdViolationException: String = Type.getInternalName(ThresholdViolationException::class.java)
+        private val ruleViolationException: String = Type.getInternalName(RuleViolationException::class.java)
 
-        private const val threadDeathException = "java/lang/ThreadDeath"
-        private const val stackOverflowException = "java/lang/StackOverflowError"
-        private const val outOfMemoryException = "java/lang/OutOfMemoryError"
-
-        // Any of [ThreadDeath]'s throwable super-classes need explicit checking.
         private val disallowedExceptionTypes = setOf(
+                ruleViolationException,
+                thresholdViolationException,
+
+                /**
+                 * These errors indicate that the JVM is failing,
+                 * so don't allow these to be caught either.
+                 */
+                "java/lang/StackOverflowError",
+                "java/lang/OutOfMemoryError",
+
+                /**
+                 * These are immediate super-classes for our explicit errors.
+                 */
+                "java/lang/VirtualMachineError",
+                "java/lang/ThreadDeath",
+
+                /**
+                 * Any of [ThreadDeath] and [VirtualMachineError]'s throwable
+                 * super-classes need explicit checking.
+                 */
                 "java/lang/Throwable",
                 "java/lang/Error"
         )
